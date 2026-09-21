@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OKX ALGO 卖出均价</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --line:#272b35; --fg:#e8eaf0;
+    --muted:#8b93a7; --accent:#5b9dff; --up:#2ebd85; --down:#f6465d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:24px 16px;background:var(--bg);color:var(--fg);
+       font:15px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif}
+  .wrap{max-width:720px;margin:0 auto}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+  input,select{background:#0f1115;border:1px solid var(--line);color:var(--fg);
+       border-radius:8px;padding:10px 12px;font-size:15px;width:100%}
+  .f{flex:1 1 160px}
+  button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:11px 20px;
+       font-size:15px;font-weight:600;cursor:pointer;white-space:nowrap}
+  button:disabled{opacity:.5;cursor:default}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg);font-weight:400}
+  .big{font-size:34px;font-weight:650;letter-spacing:-.5px;margin:2px 0 2px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-top:16px}
+  .k{font-size:12px;color:var(--muted)}
+  .v{font-size:16px;font-variant-numeric:tabular-nums}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:13px}
+  th,td{text-align:right;padding:5px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:500}
+  th:first-child,td:first-child{text-align:left}
+  .err{color:var(--down)}
+  .muted{color:var(--muted)}
+  details summary{cursor:pointer;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>OKX 合约卖出均价计算器</h1>
+  <div class="sub">按当前买一档往下吃单（taker 市价卖出），实时抓取 OKX 公开盘口，不需要 API key。</div>
+
+  <div class="card">
+    <div class="row">
+      <div class="f"><label>合约</label>
+        <select id="inst">
+          <option value="ALGO-USDT-SWAP">ALGO-USDT 永续</option>
+          <option value="ALGO-USDC-SWAP">ALGO-USDC 永续</option>
+        </select>
+      </div>
+      <div class="f"><label>卖出数量（币本位，ALGO）</label>
+        <input id="qty" type="number" value="720000" step="1000">
+      </div>
+      <div><button id="go">计算</button></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label style="margin:0"><input type="checkbox" id="auto" style="width:auto;margin-right:6px">每 3 秒自动刷新</label>
+    </div>
+  </div>
+
+  <div class="card" id="out"><span class="muted">点「计算」开始。</span></div>
+</div>
+
+<script>
+const HOSTS = ["https://www.okx.com", "https://aws.okx.com"];
+const fmt = (n,d=4) => n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmt0 = n => n.toLocaleString("en-US",{maximumFractionDigits:0});
+
+async function get(path){
+  let last;
+  for (const h of HOSTS){
+    try{
+      const r = await fetch(h + path, {cache:"no-store"});
+      const j = await r.json();
+      if (j.code !== "0") throw new Error(j.msg || ("code " + j.code));
+      return j.data;
+    }catch(e){ last = e; }
+  }
+  throw last;
+}
+
+const instCache = {};
+async function ctVal(instId){
+  if (instCache[instId]) return instCache[instId];
+  const d = await get(`/api/v5/public/instruments?instType=SWAP&instId=${instId}`);
+  if (!d.length) throw new Error("找不到合约 " + instId);
+  return instCache[instId] = {ct: parseFloat(d[0].ctVal), ccy: d[0].ctValCcy};
+}
+
+async function calc(){
+  const instId = document.getElementById("inst").value;
+  const coins = parseFloat(document.getElementById("qty").value);
+  const out = document.getElementById("out");
+  if (!(coins > 0)) { out.innerHTML = '<span class="err">数量必须大于 0</span>'; return; }
+
+  const {ct, ccy} = await ctVal(instId);
+  const books = await get(`/api/v5/market/books?instId=${instId}&sz=400`);
+  const bids = books[0].bids.map(([p,s]) => [parseFloat(p), parseFloat(s)]);
+  const asks = books[0].asks.map(([p,s]) => [parseFloat(p), parseFloat(s)]);
+  const ts = parseInt(books[0].ts, 10);
+
+  const needCt = coins / ct;                      // 需要卖出的张数
+  let rem = needCt, notional = 0, levels = 0;
+  const rows = [];
+  for (const [p, s] of bids){
+    if (rem <= 1e-12) break;
+    const take = Math.min(rem, s);
+    notional += take * p; rem -= take; levels++;
+    if (rows.length < 12) rows.push([p, take, take*ct, notional]);
+  }
+  const filledCt = needCt - rem;
+  const filledCoins = filledCt * ct;
+  const avg = filledCt > 0 ? notional / filledCt : 0;
+  const best = bids[0][0], bestAsk = asks[0][0], mid = (best + bestAsk) / 2;
+  const slipBid = (best - avg) / best * 100;
+  const slipMid = (mid - avg) / mid * 100;
+  const depthCoins = bids.reduce((a,[,s]) => a + s, 0) * ct;
+
+  out.innerHTML = `
+    <div class="k">卖出 ${fmt0(filledCoins)} ${ccy} 的成交均价</div>
+    <div class="big">${fmt(avg, 5)} <span style="font-size:18px;color:var(--muted)">USDT</span></div>
+    <div class="k">总收入 ≈ ${fmt(notional * ct, 2)} USDT　·　${fmt0(needCt)} 张（1 张 = ${ct} ${ccy}）</div>
+    <div class="grid">
+      <div><div class="k">买一 / 卖一</div><div class="v">${fmt(best,5)} / ${fmt(bestAsk,5)}</div></div>
+      <div><div class="k">中间价</div><div class="v">${fmt(mid,5)}</div></div>
+      <div><div class="k">相对买一滑点</div><div class="v" style="color:var(--down)">-${fmt(slipBid,3)}%</div></div>
+      <div><div class="k">相对中间价滑点</div><div class="v" style="color:var(--down)">-${fmt(slipMid,3)}%</div></div>
+      <div><div class="k">吃掉档位</div><div class="v">${levels} 档，最低 ${fmt(rows.length?bids[levels-1][0]:0,5)}</div></div>
+      <div><div class="k">买盘总深度(400档)</div><div class="v">${fmt0(depthCoins)} ${ccy}</div></div>
+    </div>
+    ${rem > 1e-9 ? `<p class="err">⚠️ 盘口深度不足：400 档买单只够卖 ${fmt0(filledCoins)} ${ccy}，还差 ${fmt0(rem*ct)}。上面均价只针对已成交部分。</p>` : ""}
+    <details style="margin-top:14px"><summary>前 ${rows.length} 档明细</summary>
+      <table><thead><tr><th>价格</th><th>吃张数</th><th>${ccy}</th><th>累计均价</th></tr></thead><tbody>
+      ${rows.map(([p,c,q,n],i) => `<tr><td>${fmt(p,5)}</td><td>${fmt0(c)}</td><td>${fmt0(q)}</td><td>${fmt(n / rows.slice(0,i+1).reduce((a,r)=>a+r[1],0), 5)}</td></tr>`).join("")}
+      </tbody></table>
+    </details>
+    <div class="k" style="margin-top:12px">盘口时间 ${new Date(ts).toLocaleTimeString()}　·　仅按盘口静态估算，未计手续费、资金费与撮合期间的盘口变化。</div>`;
+}
+
+let timer = null;
+const btn = document.getElementById("go");
+async function run(){
+  btn.disabled = true;
+  try { await calc(); }
+  catch(e){ document.getElementById("out").innerHTML = '<span class="err">请求失败：' + e.message + '</span>'; }
+  finally { btn.disabled = false; }
+}
+btn.onclick = run;
+document.getElementById("auto").onchange = e => {
+  clearInterval(timer);
+  if (e.target.checked){ run(); timer = setInterval(run, 3000); }
+};
+</script>
+</body>
+</html>
