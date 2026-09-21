@@ -56,7 +56,7 @@
         </select>
       </div>
       <div class="f"><label>持仓数量（<span class="u">ALGO</span>）</label>
-        <input id="qty" type="number" value="500000" step="1000">
+        <input id="qty" type="number" value="465850" step="1000">
       </div>
       <div class="f"><label>成本价（USDT / <span class="u">ALGO</span>）</label>
         <input id="cost" type="number" value="0.1117" step="any" placeholder="填了才算盈亏">
@@ -84,7 +84,7 @@ const fmt0 = n => n.toLocaleString("en-US",{maximumFractionDigits:0});
 const decOf = step => { const t = String(step); const i = t.indexOf("."); return i < 0 ? 0 : t.length - i - 1; };
 
 // 切换合约时同步单位文字，数量没被手动改过就换成该合约的常用默认值
-const DEF_QTY = {"XAU-USDT-SWAP":132, "XAG-USDT-SWAP":5000, "ALGO-USDT-SWAP":500000, "ALGO-USDC-SWAP":500000};
+const DEF_QTY = {"XAU-USDT-SWAP":132, "XAG-USDT-SWAP":5000, "ALGO-USDT-SWAP":465850, "ALGO-USDC-SWAP":465850};
 const UNIT = {"XAU-USDT-SWAP":"XAU", "XAG-USDT-SWAP":"XAG", "ALGO-USDT-SWAP":"ALGO", "ALGO-USDC-SWAP":"ALGO"};
 let qtyTouched = false;
 
