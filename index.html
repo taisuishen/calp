@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OKX ALGO 卖出均价</title>
+<title>OKX ALGO 清仓利润</title>
 <style>
   :root{
     --bg:#0f1115; --card:#171a21; --line:#272b35; --fg:#e8eaf0;
@@ -36,12 +36,14 @@
   .err{color:var(--down)}
   .muted{color:var(--muted)}
   details summary{cursor:pointer;color:var(--muted);font-size:13px}
+  .up{color:var(--up)} .down{color:var(--down)}
+  .hr{height:1px;background:var(--line);margin:18px 0}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>OKX 合约卖出均价计算器</h1>
-  <div class="sub">按当前买一档往下吃单（taker 市价卖出），实时抓取 OKX 公开盘口，不需要 API key。</div>
+  <h1>OKX 合约清仓利润计算器</h1>
+  <div class="sub">按当前买一档往下吃单（taker 市价卖出），实时抓取 OKX 公开盘口，不需要 API key。填成本价即可算出这笔清仓的盈亏。</div>
 
   <div class="card">
     <div class="row">
@@ -54,10 +56,18 @@
       <div class="f"><label>卖出数量（币本位，ALGO）</label>
         <input id="qty" type="number" value="720000" step="1000">
       </div>
+      <div class="f"><label>成本价（USDT / ALGO）</label>
+        <input id="cost" type="number" value="0.11227" step="0.00001">
+      </div>
       <div><button id="go">计算</button></div>
     </div>
     <div class="row" style="margin-top:12px">
-      <label style="margin:0"><input type="checkbox" id="auto" style="width:auto;margin-right:6px">每 3 秒自动刷新</label>
+      <div class="f"><label>taker 手续费率（%，单边）</label>
+        <input id="fee" type="number" value="0.05" step="0.01">
+      </div>
+      <div class="f" style="flex:2 1 240px">
+        <label style="margin:0"><input type="checkbox" id="auto" style="width:auto;margin-right:6px">每 3 秒自动刷新</label>
+      </div>
     </div>
   </div>
 
@@ -93,8 +103,11 @@ async function ctVal(instId){
 async function calc(){
   const instId = document.getElementById("inst").value;
   const coins = parseFloat(document.getElementById("qty").value);
+  const cost = parseFloat(document.getElementById("cost").value);
+  const feeRate = (parseFloat(document.getElementById("fee").value) || 0) / 100;
   const out = document.getElementById("out");
   if (!(coins > 0)) { out.innerHTML = '<span class="err">数量必须大于 0</span>'; return; }
+  const hasCost = cost > 0;
 
   const {ct, ccy} = await ctVal(instId);
   const books = await get(`/api/v5/market/books?instId=${instId}&sz=400`);
@@ -109,7 +122,7 @@ async function calc(){
     if (rem <= 1e-12) break;
     const take = Math.min(rem, s);
     notional += take * p; rem -= take; levels++;
-    if (rows.length < 12) rows.push([p, take, take*ct, notional]);
+    if (rows.length < 12) rows.push([p, take, (needCt - rem) * ct, notional]);
   }
   const filledCt = needCt - rem;
   const filledCoins = filledCt * ct;
@@ -119,10 +132,41 @@ async function calc(){
   const slipMid = (mid - avg) / mid * 100;
   const depthCoins = bids.reduce((a,[,s]) => a + s, 0) * ct;
 
+  // 清仓盈亏
+  const revenue   = notional * ct;              // 卖出总收入（USDT）
+  const feeCost   = revenue * feeRate;          // taker 手续费
+  const netRev    = revenue - feeCost;          // 到手金额
+  const costTotal = cost * filledCoins;         // 建仓总成本
+  const pnlGross  = revenue - costTotal;        // 毛利
+  const pnlNet    = netRev - costTotal;         // 净利（扣手续费）
+  const roi       = costTotal > 0 ? pnlNet / costTotal * 100 : 0;
+  const perCoin   = filledCoins > 0 ? pnlNet / filledCoins : 0;
+  const breakeven = filledCoins > 0 ? costTotal / (filledCoins * (1 - feeRate)) : 0;  // 保本均价
+  const cls       = pnlNet >= 0 ? "up" : "down";
+  const sign      = n => (n >= 0 ? "+" : "-") + fmt(Math.abs(n), 2);
+
   out.innerHTML = `
+    ${hasCost ? `
+    <div class="k">清仓 ${fmt0(filledCoins)} ${ccy} 的净盈亏（成本价 ${fmt(cost,5)}）</div>
+    <div class="big ${cls}">${sign(pnlNet)} <span style="font-size:18px;color:var(--muted)">USDT</span></div>
+    <div class="k">收益率 <span class="${cls}">${pnlNet>=0?"+":"-"}${fmt(Math.abs(roi),2)}%</span>　·　每 ${ccy} ${pnlNet>=0?"赚":"亏"} ${fmt(Math.abs(perCoin),5)} USDT</div>
+    <div class="grid">
+      <div><div class="k">保本均价（含手续费）</div><div class="v">${fmt(breakeven,5)}</div></div>
+      <div><div class="k">建仓总成本</div><div class="v">${fmt(costTotal,2)} USDT</div></div>
+      <div><div class="k">卖出总收入</div><div class="v">${fmt(revenue,2)} USDT</div></div>
+      <div><div class="k">手续费 (${fmt(feeRate*100,3)}%)</div><div class="v down">-${fmt(feeCost,2)} USDT</div></div>
+      <div><div class="k">到手金额</div><div class="v">${fmt(netRev,2)} USDT</div></div>
+      <div><div class="k">毛利（未扣手续费）</div><div class="v ${pnlGross>=0?"up":"down"}">${sign(pnlGross)} USDT</div></div>
+      <div><div class="k">数量</div><div class="v">${fmt0(needCt)} 张 = ${fmt0(filledCoins)} ${ccy}</div></div>
+    </div>
+    <div class="hr"></div>
+    <div class="k">成交均价</div>
+    <div class="big">${fmt(avg, 5)} <span style="font-size:18px;color:var(--muted)">USDT</span></div>
+    ` : `
     <div class="k">卖出 ${fmt0(filledCoins)} ${ccy} 的成交均价</div>
     <div class="big">${fmt(avg, 5)} <span style="font-size:18px;color:var(--muted)">USDT</span></div>
-    <div class="k">总收入 ≈ ${fmt(notional * ct, 2)} USDT　·　${fmt0(needCt)} 张（1 张 = ${ct} ${ccy}）</div>
+    <div class="k">总收入 ≈ ${fmt(revenue, 2)} USDT　·　${fmt0(needCt)} 张（1 张 = ${ct} ${ccy}）</div>
+    `}
     <div class="grid">
       <div><div class="k">买一 / 卖一</div><div class="v">${fmt(best,5)} / ${fmt(bestAsk,5)}</div></div>
       <div><div class="k">中间价</div><div class="v">${fmt(mid,5)}</div></div>
@@ -133,11 +177,15 @@ async function calc(){
     </div>
     ${rem > 1e-9 ? `<p class="err">⚠️ 盘口深度不足：400 档买单只够卖 ${fmt0(filledCoins)} ${ccy}，还差 ${fmt0(rem*ct)}。上面均价只针对已成交部分。</p>` : ""}
     <details style="margin-top:14px"><summary>前 ${rows.length} 档明细</summary>
-      <table><thead><tr><th>价格</th><th>吃张数</th><th>${ccy}</th><th>累计均价</th></tr></thead><tbody>
-      ${rows.map(([p,c,q,n],i) => `<tr><td>${fmt(p,5)}</td><td>${fmt0(c)}</td><td>${fmt0(q)}</td><td>${fmt(n / rows.slice(0,i+1).reduce((a,r)=>a+r[1],0), 5)}</td></tr>`).join("")}
+      <table><thead><tr><th>价格</th><th>吃张数</th><th>累计 ${ccy}</th><th>累计均价</th>${hasCost?"<th>累计净盈亏</th>":""}</tr></thead><tbody>
+      ${rows.map(([p,c,cum,n],i) => {
+        const cumCt = rows.slice(0,i+1).reduce((a,r)=>a+r[1],0);
+        const cumPnl = n * ct * (1 - feeRate) - cost * cum;
+        return `<tr><td>${fmt(p,5)}</td><td>${fmt0(c)}</td><td>${fmt0(cum)}</td><td>${fmt(n / cumCt, 5)}</td>${hasCost?`<td class="${cumPnl>=0?"up":"down"}">${sign(cumPnl)}</td>`:""}</tr>`;
+      }).join("")}
       </tbody></table>
     </details>
-    <div class="k" style="margin-top:12px">盘口时间 ${new Date(ts).toLocaleTimeString()}　·　仅按盘口静态估算，未计手续费、资金费与撮合期间的盘口变化。</div>`;
+    <div class="k" style="margin-top:12px">盘口时间 ${new Date(ts).toLocaleTimeString()}　·　仅按盘口静态估算，未计资金费与撮合期间的盘口变化；手续费按上面填的 taker 费率单边扣除。</div>`;
 }
 
 let timer = null;
