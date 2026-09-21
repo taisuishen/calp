@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OKX ALGO 清仓利润</title>
+<title>OKX 清仓利润计算器</title>
 <style>
   :root{
     --bg:#0f1115; --card:#171a21; --line:#272b35; --fg:#e8eaf0;
@@ -49,15 +49,17 @@
     <div class="row">
       <div class="f"><label>合约</label>
         <select id="inst">
+          <option value="XAU-USDT-SWAP">黄金 XAU-USDT 永续</option>
+          <option value="XAG-USDT-SWAP">白银 XAG-USDT 永续</option>
           <option value="ALGO-USDT-SWAP">ALGO-USDT 永续</option>
           <option value="ALGO-USDC-SWAP">ALGO-USDC 永续</option>
         </select>
       </div>
-      <div class="f"><label>卖出数量（币本位，ALGO）</label>
-        <input id="qty" type="number" value="720000" step="1000">
+      <div class="f"><label>持仓数量（<span class="u">XAU</span>）</label>
+        <input id="qty" type="number" value="66" step="1">
       </div>
-      <div class="f"><label>成本价（USDT / ALGO）</label>
-        <input id="cost" type="number" value="0.11227" step="0.00001">
+      <div class="f"><label>成本价（USDT / <span class="u">XAU</span>）</label>
+        <input id="cost" type="number" value="" step="0.1" placeholder="填了才算盈亏">
       </div>
       <div><button id="go">计算</button></div>
     </div>
@@ -78,6 +80,13 @@
 const HOSTS = ["https://www.okx.com", "https://aws.okx.com"];
 const fmt = (n,d=4) => n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const fmt0 = n => n.toLocaleString("en-US",{maximumFractionDigits:0});
+// 小数位数：从 tickSz / ctVal 之类的步长字符串里数出来
+const decOf = step => { const t = String(step); const i = t.indexOf("."); return i < 0 ? 0 : t.length - i - 1; };
+
+// 切换合约时同步单位文字，数量没被手动改过就换成该合约的常用默认值
+const DEF_QTY = {"XAU-USDT-SWAP":66, "XAG-USDT-SWAP":5000, "ALGO-USDT-SWAP":720000, "ALGO-USDC-SWAP":720000};
+const UNIT = {"XAU-USDT-SWAP":"XAU", "XAG-USDT-SWAP":"XAG", "ALGO-USDT-SWAP":"ALGO", "ALGO-USDC-SWAP":"ALGO"};
+let qtyTouched = false;
 
 async function get(path){
   let last;
@@ -97,7 +106,12 @@ async function ctVal(instId){
   if (instCache[instId]) return instCache[instId];
   const d = await get(`/api/v5/public/instruments?instType=SWAP&instId=${instId}`);
   if (!d.length) throw new Error("找不到合约 " + instId);
-  return instCache[instId] = {ct: parseFloat(d[0].ctVal), ccy: d[0].ctValCcy};
+  return instCache[instId] = {
+    ct: parseFloat(d[0].ctVal),
+    ccy: d[0].ctValCcy,
+    pd: decOf(d[0].tickSz),      // 价格小数位
+    qd: decOf(d[0].ctVal),       // 币数小数位（1 张 = ctVal 个）
+  };
 }
 
 async function calc(){
@@ -109,7 +123,10 @@ async function calc(){
   if (!(coins > 0)) { out.innerHTML = '<span class="err">数量必须大于 0</span>'; return; }
   const hasCost = cost > 0;
 
-  const {ct, ccy} = await ctVal(instId);
+  const {ct, ccy, pd, qd} = await ctVal(instId);
+  const fmtP = n => fmt(n, pd);                                    // 挂单价
+  const fmtA = n => fmt(n, pd + 1);                                // 均价（多一位）
+  const fmtQ = n => n.toLocaleString("en-US",{maximumFractionDigits:qd});
   const books = await get(`/api/v5/market/books?instId=${instId}&sz=400`);
   const bids = books[0].bids.map(([p,s]) => [parseFloat(p), parseFloat(s)]);
   const asks = books[0].asks.map(([p,s]) => [parseFloat(p), parseFloat(s)]);
@@ -147,41 +164,41 @@ async function calc(){
 
   out.innerHTML = `
     ${hasCost ? `
-    <div class="k">清仓 ${fmt0(filledCoins)} ${ccy} 的净盈亏（成本价 ${fmt(cost,5)}）</div>
+    <div class="k">清仓 ${fmtQ(filledCoins)} ${ccy} 的净盈亏（成本价 ${fmtA(cost)}）</div>
     <div class="big ${cls}">${sign(pnlNet)} <span style="font-size:18px;color:var(--muted)">USDT</span></div>
-    <div class="k">收益率 <span class="${cls}">${pnlNet>=0?"+":"-"}${fmt(Math.abs(roi),2)}%</span>　·　每 ${ccy} ${pnlNet>=0?"赚":"亏"} ${fmt(Math.abs(perCoin),5)} USDT</div>
+    <div class="k">收益率 <span class="${cls}">${pnlNet>=0?"+":"-"}${fmt(Math.abs(roi),2)}%</span>　·　每 ${ccy} ${pnlNet>=0?"赚":"亏"} ${fmtA(Math.abs(perCoin))} USDT</div>
     <div class="grid">
-      <div><div class="k">保本均价（含手续费）</div><div class="v">${fmt(breakeven,5)}</div></div>
+      <div><div class="k">保本均价（含手续费）</div><div class="v">${fmtA(breakeven)}</div></div>
       <div><div class="k">建仓总成本</div><div class="v">${fmt(costTotal,2)} USDT</div></div>
       <div><div class="k">卖出总收入</div><div class="v">${fmt(revenue,2)} USDT</div></div>
       <div><div class="k">手续费 (${fmt(feeRate*100,3)}%)</div><div class="v down">-${fmt(feeCost,2)} USDT</div></div>
       <div><div class="k">到手金额</div><div class="v">${fmt(netRev,2)} USDT</div></div>
       <div><div class="k">毛利（未扣手续费）</div><div class="v ${pnlGross>=0?"up":"down"}">${sign(pnlGross)} USDT</div></div>
-      <div><div class="k">数量</div><div class="v">${fmt0(needCt)} 张 = ${fmt0(filledCoins)} ${ccy}</div></div>
+      <div><div class="k">数量</div><div class="v">${fmt0(needCt)} 张 = ${fmtQ(filledCoins)} ${ccy}</div></div>
     </div>
     <div class="hr"></div>
     <div class="k">成交均价</div>
-    <div class="big">${fmt(avg, 5)} <span style="font-size:18px;color:var(--muted)">USDT</span></div>
+    <div class="big">${fmtA(avg)} <span style="font-size:18px;color:var(--muted)">USDT</span></div>
     ` : `
-    <div class="k">卖出 ${fmt0(filledCoins)} ${ccy} 的成交均价</div>
-    <div class="big">${fmt(avg, 5)} <span style="font-size:18px;color:var(--muted)">USDT</span></div>
+    <div class="k">卖出 ${fmtQ(filledCoins)} ${ccy} 的成交均价</div>
+    <div class="big">${fmtA(avg)} <span style="font-size:18px;color:var(--muted)">USDT</span></div>
     <div class="k">总收入 ≈ ${fmt(revenue, 2)} USDT　·　${fmt0(needCt)} 张（1 张 = ${ct} ${ccy}）</div>
     `}
     <div class="grid">
-      <div><div class="k">买一 / 卖一</div><div class="v">${fmt(best,5)} / ${fmt(bestAsk,5)}</div></div>
-      <div><div class="k">中间价</div><div class="v">${fmt(mid,5)}</div></div>
+      <div><div class="k">买一 / 卖一</div><div class="v">${fmtP(best)} / ${fmtP(bestAsk)}</div></div>
+      <div><div class="k">中间价</div><div class="v">${fmtA(mid)}</div></div>
       <div><div class="k">相对买一滑点</div><div class="v" style="color:var(--down)">-${fmt(slipBid,3)}%</div></div>
       <div><div class="k">相对中间价滑点</div><div class="v" style="color:var(--down)">-${fmt(slipMid,3)}%</div></div>
-      <div><div class="k">吃掉档位</div><div class="v">${levels} 档，最低 ${fmt(rows.length?bids[levels-1][0]:0,5)}</div></div>
-      <div><div class="k">买盘总深度(400档)</div><div class="v">${fmt0(depthCoins)} ${ccy}</div></div>
+      <div><div class="k">吃掉档位</div><div class="v">${levels} 档，最低 ${fmtP(rows.length?bids[levels-1][0]:0)}</div></div>
+      <div><div class="k">买盘总深度(400档)</div><div class="v">${fmtQ(depthCoins)} ${ccy}</div></div>
     </div>
-    ${rem > 1e-9 ? `<p class="err">⚠️ 盘口深度不足：400 档买单只够卖 ${fmt0(filledCoins)} ${ccy}，还差 ${fmt0(rem*ct)}。上面均价只针对已成交部分。</p>` : ""}
+    ${rem > 1e-9 ? `<p class="err">⚠️ 盘口深度不足：400 档买单只够卖 ${fmtQ(filledCoins)} ${ccy}，还差 ${fmtQ(rem*ct)}。上面均价只针对已成交部分。</p>` : ""}
     <details style="margin-top:14px"><summary>前 ${rows.length} 档明细</summary>
       <table><thead><tr><th>价格</th><th>吃张数</th><th>累计 ${ccy}</th><th>累计均价</th>${hasCost?"<th>累计净盈亏</th>":""}</tr></thead><tbody>
       ${rows.map(([p,c,cum,n],i) => {
         const cumCt = rows.slice(0,i+1).reduce((a,r)=>a+r[1],0);
         const cumPnl = n * ct * (1 - feeRate) - cost * cum;
-        return `<tr><td>${fmt(p,5)}</td><td>${fmt0(c)}</td><td>${fmt0(cum)}</td><td>${fmt(n / cumCt, 5)}</td>${hasCost?`<td class="${cumPnl>=0?"up":"down"}">${sign(cumPnl)}</td>`:""}</tr>`;
+        return `<tr><td>${fmtP(p)}</td><td>${fmt0(c)}</td><td>${fmtQ(cum)}</td><td>${fmtA(n / cumCt)}</td>${hasCost?`<td class="${cumPnl>=0?"up":"down"}">${sign(cumPnl)}</td>`:""}</tr>`;
       }).join("")}
       </tbody></table>
     </details>
@@ -197,6 +214,17 @@ async function run(){
   finally { btn.disabled = false; }
 }
 btn.onclick = run;
+
+const instEl = document.getElementById("inst"), qtyEl = document.getElementById("qty");
+qtyEl.oninput = () => { qtyTouched = true; };
+function syncUnit(){
+  const u = UNIT[instEl.value] || "币";
+  document.querySelectorAll(".u").forEach(el => el.textContent = u);
+  if (!qtyTouched && DEF_QTY[instEl.value]) qtyEl.value = DEF_QTY[instEl.value];
+}
+instEl.onchange = syncUnit;
+syncUnit();
+
 document.getElementById("auto").onchange = e => {
   clearInterval(timer);
   if (e.target.checked){ run(); timer = setInterval(run, 3000); }
