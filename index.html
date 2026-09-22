@@ -67,6 +67,12 @@
       <div class="f"><label>taker 手续费率（%，单边）</label>
         <input id="fee" type="number" value="0.05" step="0.01">
       </div>
+      <div class="f"><label>盘口深度</label>
+        <select id="depth">
+          <option value="full">全量（books-full，最多 5000 档）</option>
+          <option value="400">400 档（books，更快）</option>
+        </select>
+      </div>
       <div class="f" style="flex:2 1 240px">
         <label style="margin:0"><input type="checkbox" id="auto" style="width:auto;margin-right:6px">每 3 秒自动刷新</label>
       </div>
@@ -127,7 +133,14 @@ async function calc(){
   const fmtP = n => fmt(n, pd);                                    // 挂单价
   const fmtA = n => fmt(n, pd + 1);                                // 均价（多一位）
   const fmtQ = n => n.toLocaleString("en-US",{maximumFractionDigits:qd});
-  const books = await get(`/api/v5/market/books?instId=${instId}&sz=400`);
+  const wantFull = document.getElementById("depth").value === "full";
+  let books;
+  if (wantFull){
+    try { books = await get(`/api/v5/market/books-full?instId=${instId}&sz=5000`); }
+    catch(e){ books = await get(`/api/v5/market/books?instId=${instId}&sz=400`); }
+  } else {
+    books = await get(`/api/v5/market/books?instId=${instId}&sz=400`);
+  }
   const bids = books[0].bids.map(([p,s]) => [parseFloat(p), parseFloat(s)]);
   const asks = books[0].asks.map(([p,s]) => [parseFloat(p), parseFloat(s)]);
   const ts = parseInt(books[0].ts, 10);
@@ -148,6 +161,8 @@ async function calc(){
   const slipBid = (best - avg) / best * 100;
   const slipMid = (mid - avg) / mid * 100;
   const depthCoins = bids.reduce((a,[,s]) => a + s, 0) * ct;
+  const slipCost   = (best - avg) * filledCoins;        // 砸盘多付的钱（相对买一）
+  const depthShare = depthCoins > 0 ? filledCoins / depthCoins * 100 : 0;
 
   // 清仓盈亏
   const revenue   = notional * ct;              // 卖出总收入（USDT）
@@ -190,9 +205,11 @@ async function calc(){
       <div><div class="k">相对买一滑点</div><div class="v" style="color:var(--down)">-${fmt(slipBid,3)}%</div></div>
       <div><div class="k">相对中间价滑点</div><div class="v" style="color:var(--down)">-${fmt(slipMid,3)}%</div></div>
       <div><div class="k">吃掉档位</div><div class="v">${levels} 档，最低 ${fmtP(rows.length?bids[levels-1][0]:0)}</div></div>
-      <div><div class="k">买盘总深度(400档)</div><div class="v">${fmtQ(depthCoins)} ${ccy}</div></div>
+      <div><div class="k">买盘总深度（${fmt0(bids.length)} 档）</div><div class="v">${fmtQ(depthCoins)} ${ccy}</div></div>
+      <div><div class="k">占买盘深度</div><div class="v"${depthShare>50?' style="color:var(--down)"':''}>${fmt(depthShare,1)}%</div></div>
+      <div><div class="k">滑点成本（相对买一）</div><div class="v down">-${fmt(slipCost,2)} USDT</div></div>
     </div>
-    ${rem > 1e-9 ? `<p class="err">⚠️ 盘口深度不足：400 档买单只够卖 ${fmtQ(filledCoins)} ${ccy}，还差 ${fmtQ(rem*ct)}。上面均价只针对已成交部分。</p>` : ""}
+    ${rem > 1e-9 ? `<p class="err">⚠️ 盘口深度不足：${fmt0(bids.length)} 档买单只够卖 ${fmtQ(filledCoins)} ${ccy}，还差 ${fmtQ(rem*ct)}。上面均价只针对已成交部分。</p>` : ""}
     <details style="margin-top:14px"><summary>前 ${rows.length} 档明细</summary>
       <table><thead><tr><th>价格</th><th>吃张数</th><th>累计 ${ccy}</th><th>累计均价</th>${hasCost?"<th>累计净盈亏</th>":""}</tr></thead><tbody>
       ${rows.map(([p,c,cum,n],i) => {
