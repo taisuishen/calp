@@ -49,17 +49,18 @@
     <div class="row">
       <div class="f"><label>合约</label>
         <select id="inst">
+          <option value="LINK-USDT-SWAP">LINK-USDT 永续</option>
           <option value="ALGO-USDT-SWAP">ALGO-USDT 永续</option>
           <option value="ALGO-USDC-SWAP">ALGO-USDC 永续</option>
           <option value="XAU-USDT-SWAP">黄金 XAU-USDT 永续</option>
           <option value="XAG-USDT-SWAP">白银 XAG-USDT 永续</option>
         </select>
       </div>
-      <div class="f"><label>持仓数量（<span class="u">ALGO</span>）</label>
-        <input id="qty" type="number" value="909000" step="1000">
+      <div class="f"><label>持仓数量（<span class="u">LINK</span>）</label>
+        <input id="qty" type="number" value="17000" step="100">
       </div>
-      <div class="f"><label>成本价（USDT / <span class="u">ALGO</span>）</label>
-        <input id="cost" type="number" value="0.11107" step="any" placeholder="填了才算盈亏">
+      <div class="f"><label>成本价（USDT / <span class="u">LINK</span>）</label>
+        <input id="cost" type="number" value="12.986" step="any" placeholder="填了才算盈亏">
       </div>
       <div><button id="go">计算</button></div>
     </div>
@@ -90,8 +91,8 @@ const fmt0 = n => n.toLocaleString("en-US",{maximumFractionDigits:0});
 const decOf = step => { const t = String(step); const i = t.indexOf("."); return i < 0 ? 0 : t.length - i - 1; };
 
 // 切换合约时同步单位文字，数量没被手动改过就换成该合约的常用默认值
-const DEF_QTY = {"XAU-USDT-SWAP":132, "XAG-USDT-SWAP":5000, "ALGO-USDT-SWAP":909000, "ALGO-USDC-SWAP":909000};
-const UNIT = {"XAU-USDT-SWAP":"XAU", "XAG-USDT-SWAP":"XAG", "ALGO-USDT-SWAP":"ALGO", "ALGO-USDC-SWAP":"ALGO"};
+const DEF_QTY = {"LINK-USDT-SWAP":17000, "XAU-USDT-SWAP":132, "XAG-USDT-SWAP":5000, "ALGO-USDT-SWAP":909000, "ALGO-USDC-SWAP":909000};
+const UNIT = {"LINK-USDT-SWAP":"LINK", "XAU-USDT-SWAP":"XAU", "XAG-USDT-SWAP":"XAG", "ALGO-USDT-SWAP":"ALGO", "ALGO-USDC-SWAP":"ALGO"};
 let qtyTouched = false;
 
 async function get(path){
